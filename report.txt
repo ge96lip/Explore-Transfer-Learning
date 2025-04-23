@@ -1,0 +1,8 @@
+# Initial Training: 
+Resnet18 5 epochs (val = test set) Test Accuracy: 87.77%
+- Batch-size = 32 
+- LEARNING_RATE = 1e-4
+
+Resnet34 epcohs 15: 91.30% test Accuracy
+
+Resnet101 epochs 15: Test Accuracy: 95.11%
