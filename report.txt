@@ -9,3 +9,6 @@ Resnet101 epochs 15: Test Accuracy: 95.11%
 
 With newest version with correct labelling (ResNet18, 5 epochs):
 Test Accuracy: 99.74%
+
+Baseline for multiclass (with same settings):
+Test Accuracy: 86.75%
