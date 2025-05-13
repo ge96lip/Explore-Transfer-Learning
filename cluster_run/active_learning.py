@@ -6,7 +6,7 @@ from typing import List
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
-from torchvision.models import resnet34, ResNet34_Weights
+from torchvision.models import resnet18, ResNet18_Weights
 from torch.nn import functional as F
 from sklearn.cluster import KMeans
 from torch import nn
@@ -56,15 +56,19 @@ class ActiveLearning:
         self.k = k
         self.beta = beta
         self.train_image_paths = []
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Use passed-in model if provided
-        self.model = model if model is not None else resnet34(weights=ResNet34_Weights.DEFAULT)
+        self.model = model if model is not None else resnet18(weights=ResNet18_Weights.DEFAULT)
+        self.model = self.model.to(self.device)
         self.model.eval()
 
         # Use passed-in feature extractor or default
-        self.feature_extractor = feature_extractor if feature_extractor is not None else resnet34(weights=ResNet34_Weights.DEFAULT)
+        self.feature_extractor = feature_extractor if feature_extractor is not None else resnet18(
+            weights=ResNet18_Weights.DEFAULT)
         if feature_extractor is None:
             self.feature_extractor.fc = torch.nn.Identity()
+        self.feature_extractor = self.feature_extractor.to(self.device)
         self.feature_extractor.eval()
 
         self.transform = transforms.Compose([
@@ -73,21 +77,23 @@ class ActiveLearning:
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
         ])
-        
+
     def set_training_pool(self, image_paths):
         self.train_image_paths = image_paths
-    
+
     def preprocess(self, path):
         img = Image.open(path).convert("RGB")
-        return torch.unsqueeze(self.transform(img), 0)
+        return self.transform(img).unsqueeze(0).to(self.device)
 
     def softmax_probs(self, img_tensor):
         with torch.no_grad():
-            return F.softmax(self.model(img_tensor), dim=1).squeeze().numpy()
+            img_tensor = img_tensor.to(self.device)
+            return F.softmax(self.model(img_tensor), dim=1).squeeze().cpu().numpy()
 
     def extract_feature(self, img_tensor):
         with torch.no_grad():
-            return self.feature_extractor(img_tensor).squeeze().numpy()
+            img_tensor = img_tensor.to(self.device)
+            return self.feature_extractor(img_tensor).squeeze().cpu().numpy()
 
     def query_least_confidence(self, folder: str) -> List[str]:
         files = self.train_image_paths
@@ -140,6 +146,28 @@ class ActiveLearning:
             selected.append(valid_files[idx])
         return selected
 
+    # def query_hybrid(self, folder: str) -> List[str]:
+    #     files = self.train_image_paths
+    #     margins = []
+    #     features = []
+    #     for f in files:
+    #         x = self.preprocess(f)
+    #         p = self.softmax_probs(x)
+    #         p_sorted = np.sort(p)
+    #         margin = 1 - (p_sorted[-1] - p_sorted[-2])
+    #         margins.append((f, margin))
+    #         features.append(self.extract_feature(x))
+    #     top_beta = sorted(margins, key=lambda x: x[1], reverse=True)[:self.k * self.beta]
+    #     top_files = [f for f, _ in top_beta]
+    #     top_features = [features[self.train_image_paths.index(f)] for f in top_files]
+    #     kmeans = KMeans(n_clusters=self.k, random_state=0).fit(top_features)
+    #     selected = []
+    #     for center in kmeans.cluster_centers_:
+    #         dists = np.linalg.norm(np.array(top_features) - center, axis=1)
+    #         idx = np.argmin(dists)
+    #         selected.append(top_files[idx])
+    #     return selected
+
     def query_hybrid(self) -> List[str]:
         files = self.train_image_paths
         margins = []
@@ -160,10 +188,9 @@ class ActiveLearning:
             dists = np.linalg.norm(np.array(top_features) - kmeans.cluster_centers_[i], axis=1)
             selected.append(top_files[np.argmin(dists)])
         return selected
-    
+
+
 if __name__ == "__main__":
-    
-    
     al = ActiveLearning(k=5, beta=10)
     img_path = "data/oxford-iiit-pet/images/Abyssinian_1.jpg"
     img_tensor = al.preprocess(img_path)

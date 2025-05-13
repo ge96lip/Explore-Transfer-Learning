@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-from torchvision.models import resnet34, ResNet34_Weights
+from torchvision.models import resnet18, ResNet18_Weights
 from sklearn.metrics import classification_report
 import torch.nn.functional as F
 import pandas as pd
@@ -15,13 +15,13 @@ import matplotlib.pyplot as plt
 from active_learning import ActiveLearning, cat_breeds_lower, dog_breeds_lower
 
 # === Config ===
-ROUNDS = 14
+ROUNDS = 7  # 14
 INITIAL_LABELED_PERCENTAGE = 0.05
 ROUND_ADDITION_PERCENTAGE = 0.025
 BATCH_SIZE = 64
 EPOCHS = 40
 LR = 0.01
-SEEDS = [3, 12]
+SEEDS = [12]  # , 3]
 RESULT_LOG = []
 
 # === Device ===
@@ -35,6 +35,7 @@ transform = transforms.Compose([
                          std=[0.229, 0.224, 0.225])
 ])
 
+
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -42,6 +43,7 @@ def set_seed(seed=42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
 
 class LabeledFromPathDataset(Dataset):
     def __init__(self, image_paths, transform=None):
@@ -60,6 +62,7 @@ class LabeledFromPathDataset(Dataset):
     def __len__(self):
         return len(self.image_paths)
 
+
 def evaluate_model(model, dataset):
     loader = DataLoader(dataset, batch_size=32, shuffle=False)
     model.eval()
@@ -72,6 +75,7 @@ def evaluate_model(model, dataset):
             correct += (pred == y).sum().item()
             total += len(y)
     return correct / total
+
 
 def train_model(model, train_dataset, val_dataset, loss_fn, epochs=EPOCHS):
     loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -96,14 +100,17 @@ def train_model(model, train_dataset, val_dataset, loss_fn, epochs=EPOCHS):
             best_acc = acc
     return best_model
 
+
 def get_label_from_path(path):
     class_name = "_".join(os.path.basename(path).split("_")[:-1]).lower()
     return 0 if class_name in cat_breeds_lower else 1
+
 
 def log_results_to_csv(csv_path, seed_results):
     df = pd.DataFrame(seed_results)
     df.to_csv(csv_path, index=False)
     print(f"Results saved to {csv_path}")
+
 
 # === Begin Seed Loop ===
 for seed in SEEDS:
@@ -111,11 +118,13 @@ for seed in SEEDS:
     set_seed(seed)
 
     # === Load Data ===
+    # all_images = glob.glob("/content/drive/MyDrive/marina_wipi/data/oxford-iiit-pet/images/*.jpg") # Colab path
     all_images = glob.glob("data/oxford-iiit-pet/images/*.jpg")
     all_images = [f for f in all_images if "_".join(os.path.basename(f).split("_")[:-1]).lower()
                   in (cat_breeds_lower + dog_breeds_lower)]
     labels = [get_label_from_path(p) for p in all_images]
-    train_imgs, temp_imgs, _, temp_labels = train_test_split(all_images, labels, test_size=0.3, stratify=labels, random_state=seed)
+    train_imgs, temp_imgs, _, temp_labels = train_test_split(all_images, labels, test_size=0.3, stratify=labels,
+                                                             random_state=seed)
     val_imgs, test_imgs = train_test_split(temp_imgs, test_size=0.5, stratify=temp_labels, random_state=seed)
 
     val_cats = [f for f in val_imgs if get_label_from_path(f) == 0][:10]
@@ -131,8 +140,8 @@ for seed in SEEDS:
     initial_labeled = random.sample(train_imgs, initial_size)
     pool = list(set(train_imgs) - set(initial_labeled))
 
-    strategies = ['entropy_random', 'hybrid_random', 'random_only']
-    models = {s: resnet34(weights=ResNet34_Weights.DEFAULT).to(device) for s in strategies}
+    strategies = ['lc_random', 'kmeans_random', 'entropy_random', 'hybrid_random', 'random_only']
+    models = {s: resnet18(weights=ResNet18_Weights.DEFAULT).to(device) for s in strategies}
     for m in models.values():
         m.fc = nn.Linear(m.fc.in_features, 2)
         m.to(device)
@@ -143,7 +152,9 @@ for seed in SEEDS:
         acc = evaluate_model(models[s], test_dataset)
         num_cats = sum(get_label_from_path(f) == 0 for f in labels_per_strategy[s])
         num_dogs = sum(get_label_from_path(f) == 1 for f in labels_per_strategy[s])
-        RESULT_LOG.append({'seed': seed, 'round': 0, 'strategy': s, 'accuracy': acc, 'num_cats': num_cats, 'num_dogs': num_dogs})
+        RESULT_LOG.append(
+            {'seed': seed, 'round': 0, 'strategy': s, 'accuracy': acc, 'num_cats': num_cats, 'num_dogs': num_dogs})
+        print({'seed': seed, 'round': 0, 'strategy': s, 'accuracy': acc, 'num_cats': num_cats, 'num_dogs': num_dogs})
 
     for r in range(1, ROUNDS + 1):
         for s in strategies:
@@ -178,8 +189,10 @@ for seed in SEEDS:
             print(f"Round {r}, Strategy {s}, Accuracy: {acc:.4f}")
             num_cats = sum(get_label_from_path(f) == 0 for f in labels_per_strategy[s])
             num_dogs = sum(get_label_from_path(f) == 1 for f in labels_per_strategy[s])
-            RESULT_LOG.append({'seed': seed, 'round': r, 'strategy': s, 'accuracy': acc,
-                               'num_cats': num_cats, 'num_dogs': num_dogs})
+            result_log_string = {'seed': seed, 'round': r, 'strategy': s, 'accuracy': acc,
+                                 'num_cats': num_cats, 'num_dogs': num_dogs}
+            print(result_log_string)
+            RESULT_LOG.append(result_log_string)
 
 # === Save CSV ===
 log_results_to_csv("active_learning_eval.csv", RESULT_LOG)
